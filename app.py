@@ -5,14 +5,13 @@ import streamlit as st
 from groq import Groq
 
 from langchain_huggingface import HuggingFaceEmbeddings
-
 from langchain_community.vectorstores import FAISS
 
 
 
-# =====================================================
-# PAGE SETTINGS
-# =====================================================
+# ==========================================
+# PAGE CONFIG
+# ==========================================
 
 st.set_page_config(
     page_title="University Knowledge Assistant",
@@ -21,85 +20,51 @@ st.set_page_config(
 )
 
 
-
-# =====================================================
-# PATH CONFIGURATION
-# =====================================================
+# ==========================================
+# PATHS
+# ==========================================
 
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
 
 
-FAISS_PATH = os.path.join(
+FAISS_DIR = os.path.join(
     BASE_DIR,
     "university_rag_faiss"
 )
 
 
-CONFIG_FILE = os.path.join(
+CONFIG_PATH = os.path.join(
     BASE_DIR,
     "config.json"
 )
 
 
-METADATA_FILE = os.path.join(
-    BASE_DIR,
-    "metadata.json"
-)
-
-
-
-# =====================================================
-# CHECK REQUIRED FILES
-# =====================================================
-
-required_files = [
-
-    CONFIG_FILE,
-
-    METADATA_FILE,
-
-    os.path.join(
-        FAISS_PATH,
-        "index.faiss"
-    ),
-
-    os.path.join(
-        FAISS_PATH,
-        "index.pkl"
-    )
-
-]
-
-
-for file in required_files:
-
-    if not os.path.exists(file):
-
-        st.error(
-            f"Missing required file:\n\n{file}"
-        )
-
-        st.stop()
-
-
-
-# =====================================================
+# ==========================================
 # LOAD CONFIG
-# =====================================================
-
+# ==========================================
 
 @st.cache_data
 def load_config():
 
-    with open(
-        CONFIG_FILE,
-        "r",
-        encoding="utf-8"
-    ) as f:
+    if os.path.exists(CONFIG_PATH):
 
-        return json.load(f)
+        with open(
+            CONFIG_PATH,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            return json.load(f)
+
+
+    return {
+
+        "embedding_model":
+        "BAAI/bge-base-en-v1.5"
+
+    }
 
 
 
@@ -107,55 +72,72 @@ config = load_config()
 
 
 
-# =====================================================
-# LOAD METADATA
-# =====================================================
+# ==========================================
+# CHECK FAISS FILES
+# ==========================================
 
 
-@st.cache_data
-def load_metadata():
-
-    with open(
-        METADATA_FILE,
-        "r",
-        encoding="utf-8"
-    ) as f:
-
-        return json.load(f)
+faiss_file = os.path.join(
+    FAISS_DIR,
+    "index.faiss"
+)
 
 
-
-metadata = load_metadata()
+pickle_file = os.path.join(
+    FAISS_DIR,
+    "index.pkl"
+)
 
 
 
-# =====================================================
-# LOAD EMBEDDINGS
-# =====================================================
+if not os.path.exists(faiss_file):
 
+    st.error(
+        """
+        ❌ FAISS database missing.
+
+        Required files:
+
+        university_rag_faiss/
+            index.faiss
+            index.pkl
+
+        Upload these files to GitHub repository.
+        """
+    )
+
+    st.stop()
+
+
+
+# ==========================================
+# EMBEDDING MODEL
+# ==========================================
 
 @st.cache_resource
 def load_embeddings():
 
-    return HuggingFaceEmbeddings(
+    embeddings = HuggingFaceEmbeddings(
 
-        model_name=config["embedding_model"],
+        model_name=config[
+            "embedding_model"
+        ],
 
         model_kwargs={
 
-            "device":
-            "cpu"
+            "device":"cpu"
 
         },
 
         encode_kwargs={
 
-            "normalize_embeddings":
-            True
+            "normalize_embeddings":True
 
         }
 
     )
+
+    return embeddings
 
 
 
@@ -163,65 +145,43 @@ embeddings = load_embeddings()
 
 
 
-# =====================================================
+# ==========================================
 # LOAD FAISS DATABASE
-# =====================================================
+# ==========================================
 
 
 @st.cache_resource
-def load_faiss_database():
+def load_vector_database():
 
 
-    try:
+    db = FAISS.load_local(
+
+        FAISS_DIR,
+
+        embeddings,
+
+        allow_dangerous_deserialization=True
+
+    )
 
 
-        db = FAISS.load_local(
-
-            FAISS_PATH,
-
-            embeddings,
-
-            allow_dangerous_deserialization=True
-
-        )
-
-
-        return db
+    return db
 
 
 
-    except Exception as e:
-
-
-        st.error(
-            "FAISS database could not be loaded."
-        )
-
-
-        st.write(
-            "Check that index.faiss and index.pkl are uploaded correctly."
-        )
-
-
-        st.exception(e)
-
-        st.stop()
+vector_db = load_vector_database()
 
 
 
-vector_db = load_faiss_database()
-
-
-
-# =====================================================
+# ==========================================
 # GROQ CLIENT
-# =====================================================
+# ==========================================
 
 
 if "GROQ_API_KEY" not in st.secrets:
 
     st.error(
-        "GROQ_API_KEY missing. Add it in Streamlit Secrets."
+        "Missing GROQ_API_KEY in Streamlit Secrets"
     )
 
     st.stop()
@@ -230,15 +190,16 @@ if "GROQ_API_KEY" not in st.secrets:
 
 client = Groq(
 
-    api_key=st.secrets["GROQ_API_KEY"]
+    api_key=
+    st.secrets["GROQ_API_KEY"]
 
 )
 
 
 
-# =====================================================
-# HEADER
-# =====================================================
+# ==========================================
+# TITLE
+# ==========================================
 
 
 st.title(
@@ -246,47 +207,18 @@ st.title(
 )
 
 
-st.markdown(
+st.write(
 """
 Ask questions from official university documents.
-
-Available sources:
-- Student Handbook
-- Academic Calendar
-- Prospectus
-- Examination Rules
-- Department Information
+The assistant retrieves information using RAG.
 """
 )
 
 
 
-# =====================================================
-# CHAT MEMORY
-# =====================================================
-
-
-if "messages" not in st.session_state:
-
-    st.session_state.messages = []
-
-
-
-for msg in st.session_state.messages:
-
-    with st.chat_message(
-        msg["role"]
-    ):
-
-        st.markdown(
-            msg["content"]
-        )
-
-
-
-# =====================================================
-# USER QUESTION
-# =====================================================
+# ==========================================
+# CHAT
+# ==========================================
 
 
 question = st.chat_input(
@@ -298,26 +230,15 @@ question = st.chat_input(
 if question:
 
 
-    st.session_state.messages.append(
+    with st.chat_message(
+        "user"
+    ):
 
-        {
-            "role":"user",
-            "content":question
-        }
-
-    )
-
-
-    with st.chat_message("user"):
-
-        st.markdown(question)
+        st.write(question)
 
 
 
-    # =================================================
-    # RETRIEVAL
-    # =================================================
-
+    # Retrieve documents
 
     docs = vector_db.similarity_search(
 
@@ -328,75 +249,66 @@ if question:
     )
 
 
-    if len(docs)==0:
+
+    context = ""
+
+    sources = []
 
 
-        context = (
-            "No relevant information found."
+
+    for doc in docs:
+
+
+        context += (
+
+            "\n\n"
+            +
+            doc.page_content
+
         )
 
 
-    else:
+        sources.append(
 
-        context=""
+            {
 
+            "file":
+            doc.metadata.get(
+                "source_file",
+                "Unknown"
+            ),
 
-        sources=[]
-
-
-        for doc in docs:
-
-
-            context += (
-
-                "\n\n"
-                +
-                doc.page_content
-
+            "page":
+            doc.metadata.get(
+                "page_number",
+                "Unknown"
             )
 
+            }
 
-            sources.append({
-
-                "file":
-                doc.metadata.get(
-                    "source_file",
-                    "Unknown"
-                ),
-
-
-                "page":
-                doc.metadata.get(
-                    "page_number",
-                    "Unknown"
-                )
-
-            })
+        )
 
 
 
-    # =================================================
-    # GROQ GENERATION
-    # =================================================
-
+    # Prompt
 
     prompt=f"""
 
 You are a university academic assistant.
 
-Answer ONLY using the context below.
+Answer only from the provided context.
 
-If information is unavailable say:
-
+If the answer is not available,
+say:
 "I could not find this information in the university documents."
 
 
-CONTEXT:
+Context:
 
 {context}
 
 
-QUESTION:
+Question:
 
 {question}
 
@@ -404,7 +316,7 @@ QUESTION:
 
 
 
-    completion = client.chat.completions.create(
+    response = client.chat.completions.create(
 
         model="openai/gpt-oss-120b",
 
@@ -412,19 +324,19 @@ QUESTION:
 
             {
 
-                "role":"system",
+            "role":"system",
 
-                "content":
-                "You provide accurate academic answers."
+            "content":
+            "You answer academic questions accurately."
 
             },
 
 
             {
 
-                "role":"user",
+            "role":"user",
 
-                "content":prompt
+            "content":prompt
 
             }
 
@@ -437,52 +349,10 @@ QUESTION:
 
 
     answer = (
-        completion
+        response
         .choices[0]
         .message
         .content
-    )
-
-
-
-    # =================================================
-    # SOURCE CITATIONS
-    # =================================================
-
-
-    citation="\n\n### 📚 Sources\n"
-
-
-    seen=set()
-
-
-    for src in sources:
-
-
-        item=(
-
-            f"📄 {src['file']} "
-            f"- Page {src['page']}"
-
-        )
-
-
-        if item not in seen:
-
-            citation += item+"\n"
-
-            seen.add(item)
-
-
-
-    final_response = (
-
-        answer
-
-        +
-
-        citation
-
     )
 
 
@@ -491,20 +361,34 @@ QUESTION:
         "assistant"
     ):
 
+
         st.markdown(
-            final_response
+            answer
         )
 
 
+        st.markdown(
+            "### 📚 Sources"
+        )
 
-    st.session_state.messages.append(
 
-        {
+        unique=set()
 
-        "role":"assistant",
 
-        "content":final_response
+        for s in sources:
 
-        }
+            citation=(
 
-    )
+                f"📄 {s['file']} "
+                f"(Page {s['page']})"
+
+            )
+
+
+            if citation not in unique:
+
+                st.write(
+                    citation
+                )
+
+                unique.add(citation)
