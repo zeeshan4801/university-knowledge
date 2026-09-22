@@ -1,0 +1,18 @@
+# Environment
+.env
+
+# Secrets
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+
+# Colab
+.ipynb_checkpoints/
+
+# Documents
+*.pdf
+
+# Large files
+*.zip
