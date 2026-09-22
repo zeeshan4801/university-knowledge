@@ -2,75 +2,81 @@ import os
 import json
 import streamlit as st
 
+from groq import Groq
 
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_community.vectorstores import FAISS
 
-from groq import Groq
 
 
-
-# ==================================================
+# =====================================================
 # PAGE CONFIG
-# ==================================================
+# =====================================================
 
 st.set_page_config(
-
-    page_title="University Academic Assistant",
-
+    page_title="University Knowledge Assistant",
     page_icon="🎓",
-
     layout="wide"
-
 )
 
 
 
-# ==================================================
+# =====================================================
 # LOAD CONFIG
-# ==================================================
+# =====================================================
 
-with open("config.json","r") as f:
+@st.cache_data
+def load_config():
 
-    config=json.load(f)
+    with open(
+        "config.json",
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        return json.load(f)
 
 
 
-EMBEDDING_MODEL=config["embedding_model"]
+config = load_config()
 
 
 
-# ==================================================
+# =====================================================
 # LOAD METADATA
-# ==================================================
+# =====================================================
 
-with open(
-    "metadata.json",
-    "r",
-    encoding="utf-8"
-) as f:
+@st.cache_data
+def load_metadata():
 
-    metadata=json.load(f)
+    with open(
+        "metadata.json",
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        return json.load(f)
 
 
 
-# ==================================================
+metadata = load_metadata()
+
+
+
+# =====================================================
 # LOAD EMBEDDING MODEL
-# ==================================================
+# =====================================================
 
 @st.cache_resource
-
-def load_embedding():
+def load_embeddings():
 
     return HuggingFaceEmbeddings(
 
-        model_name=EMBEDDING_MODEL,
+        model_name=config["embedding_model"],
 
         model_kwargs={
-
             "device":"cpu"
-
         },
 
         encode_kwargs={
@@ -78,28 +84,26 @@ def load_embedding():
             "normalize_embeddings":True
 
         }
-
     )
 
 
 
-embedding_model=load_embedding()
+embeddings = load_embeddings()
 
 
 
-# ==================================================
-# LOAD FAISS
-# ==================================================
+# =====================================================
+# LOAD FAISS DATABASE
+# =====================================================
 
 @st.cache_resource
-
-def load_vector_db():
+def load_faiss():
 
     return FAISS.load_local(
 
         "university_rag_faiss",
 
-        embedding_model,
+        embeddings,
 
         allow_dangerous_deserialization=True
 
@@ -107,15 +111,15 @@ def load_vector_db():
 
 
 
-vector_db=load_vector_db()
+vector_db = load_faiss()
 
 
 
-# ==================================================
+# =====================================================
 # GROQ CLIENT
-# ==================================================
+# =====================================================
 
-client = Groq(
+groq_client = Groq(
 
     api_key=os.environ.get(
         "GROQ_API_KEY"
@@ -125,9 +129,9 @@ client = Groq(
 
 
 
-# ==================================================
+# =====================================================
 # HEADER
-# ==================================================
+# =====================================================
 
 st.title(
     "🎓 University Academic Knowledge Assistant"
@@ -136,21 +140,25 @@ st.title(
 
 st.write(
 """
-Ask questions related to:
-- Admission
+Ask questions about:
+
+- Admissions
 - Academic rules
 - Student handbook
-- Calendar
+- Examination rules
+- Academic calendar
 - Prospectus
 - Department information
+
+Answers are generated from official university documents.
 """
 )
 
 
 
-# ==================================================
+# =====================================================
 # CHAT MEMORY
-# ==================================================
+# =====================================================
 
 if "messages" not in st.session_state:
 
@@ -164,18 +172,18 @@ for message in st.session_state.messages:
         message["role"]
     ):
 
-        st.write(
+        st.markdown(
             message["content"]
         )
 
 
 
-# ==================================================
-# USER QUERY
-# ==================================================
+# =====================================================
+# USER INPUT
+# =====================================================
 
 question = st.chat_input(
-    "Ask your academic question..."
+    "Ask your question..."
 )
 
 
@@ -195,16 +203,16 @@ if question:
 
     with st.chat_message("user"):
 
-        st.write(question)
+        st.markdown(question)
 
 
 
-    # ----------------------------------------------
-    # RETRIEVE DOCUMENTS
-    # ----------------------------------------------
+    # ==============================================
+    # VECTOR SEARCH
+    # ==============================================
 
 
-    docs = vector_db.similarity_search(
+    retrieved_docs = vector_db.similarity_search(
 
         question,
 
@@ -214,58 +222,63 @@ if question:
 
 
 
-    context=""
+    context = ""
 
     sources=[]
 
 
 
-    for doc in docs:
+    for doc in retrieved_docs:
 
 
         context += (
 
             "\n\n"
-            +
+            + 
             doc.page_content
 
         )
 
 
+
         sources.append({
+
+            "document":
+                doc.metadata.get(
+                    "document_title",
+                    "Unknown"
+                ),
 
             "file":
                 doc.metadata.get(
-                    "source_file"
+                    "source_file",
+                    "Unknown"
                 ),
 
             "page":
                 doc.metadata.get(
-                    "page_number"
-                ),
-
-            "title":
-                doc.metadata.get(
-                    "document_title"
+                    "page_number",
+                    "Unknown"
                 )
 
         })
 
 
 
-    # ----------------------------------------------
+    # ==============================================
     # GROQ PROMPT
-    # ----------------------------------------------
+    # ==============================================
 
 
     prompt=f"""
 
 You are a university academic assistant.
 
-Answer only using the provided context.
+Rules:
 
-If the answer is not available,
-say:
+1. Answer only from provided context.
+2. Do not invent information.
+3. If information is unavailable say:
 "I could not find this information in the university documents."
 
 
@@ -282,7 +295,7 @@ Question:
 
 
 
-    response = client.chat.completions.create(
+    response = groq_client.chat.completions.create(
 
         model="openai/gpt-oss-120b",
 
@@ -293,7 +306,7 @@ Question:
             "role":"system",
 
             "content":
-            "You answer university questions accurately."
+            "You provide accurate university academic information."
 
             },
 
@@ -313,48 +326,57 @@ Question:
 
 
 
-    answer=response.choices[0].message.content
+    answer = response.choices[0].message.content
 
 
 
-    # ----------------------------------------------
-    # DISPLAY ANSWER
-    # ----------------------------------------------
+    # ==============================================
+    # SOURCE FORMAT
+    # ==============================================
 
 
-    final_answer = answer + "\n\n### 📚 Sources\n"
+    source_text="\n\n### 📚 Sources\n"
 
 
-    unique_sources=[]
+    unique=[]
 
 
-    for s in sources:
+    for src in sources:
 
-        source_text=(
 
-            f"📄 {s['file']} "
-            f"(Page {s['page']})"
+        item=(
+
+            f"📄 {src['file']} "
+            f"(Page {src['page']})"
 
         )
 
 
-        if source_text not in unique_sources:
+        if item not in unique:
 
-            unique_sources.append(
-                source_text
-            )
+            unique.append(item)
 
 
 
-    final_answer += "\n".join(
-        unique_sources
+    source_text += "\n".join(unique)
+
+
+
+    final_answer = (
+
+        answer
+
+        +
+
+        source_text
+
     )
 
 
 
     with st.chat_message("assistant"):
 
-        st.write(final_answer)
+        st.markdown(final_answer)
 
 
 
