@@ -11,7 +11,7 @@ from langchain_community.vectorstores import FAISS
 
 
 # =====================================================
-# PAGE CONFIG
+# PAGE SETTINGS
 # =====================================================
 
 st.set_page_config(
@@ -23,14 +23,78 @@ st.set_page_config(
 
 
 # =====================================================
+# PATH CONFIGURATION
+# =====================================================
+
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+
+FAISS_PATH = os.path.join(
+    BASE_DIR,
+    "university_rag_faiss"
+)
+
+
+CONFIG_FILE = os.path.join(
+    BASE_DIR,
+    "config.json"
+)
+
+
+METADATA_FILE = os.path.join(
+    BASE_DIR,
+    "metadata.json"
+)
+
+
+
+# =====================================================
+# CHECK REQUIRED FILES
+# =====================================================
+
+required_files = [
+
+    CONFIG_FILE,
+
+    METADATA_FILE,
+
+    os.path.join(
+        FAISS_PATH,
+        "index.faiss"
+    ),
+
+    os.path.join(
+        FAISS_PATH,
+        "index.pkl"
+    )
+
+]
+
+
+for file in required_files:
+
+    if not os.path.exists(file):
+
+        st.error(
+            f"Missing required file:\n\n{file}"
+        )
+
+        st.stop()
+
+
+
+# =====================================================
 # LOAD CONFIG
 # =====================================================
+
 
 @st.cache_data
 def load_config():
 
     with open(
-        "config.json",
+        CONFIG_FILE,
         "r",
         encoding="utf-8"
     ) as f:
@@ -47,11 +111,12 @@ config = load_config()
 # LOAD METADATA
 # =====================================================
 
+
 @st.cache_data
 def load_metadata():
 
     with open(
-        "metadata.json",
+        METADATA_FILE,
         "r",
         encoding="utf-8"
     ) as f:
@@ -65,8 +130,9 @@ metadata = load_metadata()
 
 
 # =====================================================
-# LOAD EMBEDDING MODEL
+# LOAD EMBEDDINGS
 # =====================================================
+
 
 @st.cache_resource
 def load_embeddings():
@@ -76,14 +142,19 @@ def load_embeddings():
         model_name=config["embedding_model"],
 
         model_kwargs={
-            "device":"cpu"
+
+            "device":
+            "cpu"
+
         },
 
         encode_kwargs={
 
-            "normalize_embeddings":True
+            "normalize_embeddings":
+            True
 
         }
+
     )
 
 
@@ -96,22 +167,49 @@ embeddings = load_embeddings()
 # LOAD FAISS DATABASE
 # =====================================================
 
+
 @st.cache_resource
-def load_faiss():
-
-    return FAISS.load_local(
-
-        "university_rag_faiss",
-
-        embeddings,
-
-        allow_dangerous_deserialization=True
-
-    )
+def load_faiss_database():
 
 
+    try:
 
-vector_db = load_faiss()
+
+        db = FAISS.load_local(
+
+            FAISS_PATH,
+
+            embeddings,
+
+            allow_dangerous_deserialization=True
+
+        )
+
+
+        return db
+
+
+
+    except Exception as e:
+
+
+        st.error(
+            "FAISS database could not be loaded."
+        )
+
+
+        st.write(
+            "Check that index.faiss and index.pkl are uploaded correctly."
+        )
+
+
+        st.exception(e)
+
+        st.stop()
+
+
+
+vector_db = load_faiss_database()
 
 
 
@@ -119,11 +217,20 @@ vector_db = load_faiss()
 # GROQ CLIENT
 # =====================================================
 
-groq_client = Groq(
 
-    api_key=os.environ.get(
-        "GROQ_API_KEY"
+if "GROQ_API_KEY" not in st.secrets:
+
+    st.error(
+        "GROQ_API_KEY missing. Add it in Streamlit Secrets."
     )
+
+    st.stop()
+
+
+
+client = Groq(
+
+    api_key=st.secrets["GROQ_API_KEY"]
 
 )
 
@@ -133,24 +240,22 @@ groq_client = Groq(
 # HEADER
 # =====================================================
 
+
 st.title(
     "🎓 University Academic Knowledge Assistant"
 )
 
 
-st.write(
+st.markdown(
 """
-Ask questions about:
+Ask questions from official university documents.
 
-- Admissions
-- Academic rules
-- Student handbook
-- Examination rules
-- Academic calendar
+Available sources:
+- Student Handbook
+- Academic Calendar
 - Prospectus
-- Department information
-
-Answers are generated from official university documents.
+- Examination Rules
+- Department Information
 """
 )
 
@@ -160,30 +265,32 @@ Answers are generated from official university documents.
 # CHAT MEMORY
 # =====================================================
 
+
 if "messages" not in st.session_state:
 
-    st.session_state.messages=[]
+    st.session_state.messages = []
 
 
 
-for message in st.session_state.messages:
+for msg in st.session_state.messages:
 
     with st.chat_message(
-        message["role"]
+        msg["role"]
     ):
 
         st.markdown(
-            message["content"]
+            msg["content"]
         )
 
 
 
 # =====================================================
-# USER INPUT
+# USER QUESTION
 # =====================================================
 
+
 question = st.chat_input(
-    "Ask your question..."
+    "Ask your academic question..."
 )
 
 
@@ -191,14 +298,14 @@ question = st.chat_input(
 if question:
 
 
-    st.session_state.messages.append({
+    st.session_state.messages.append(
 
-        "role":"user",
+        {
+            "role":"user",
+            "content":question
+        }
 
-        "content":question
-
-    })
-
+    )
 
 
     with st.chat_message("user"):
@@ -207,12 +314,12 @@ if question:
 
 
 
-    # ==============================================
-    # VECTOR SEARCH
-    # ==============================================
+    # =================================================
+    # RETRIEVAL
+    # =================================================
 
 
-    retrieved_docs = vector_db.similarity_search(
+    docs = vector_db.similarity_search(
 
         question,
 
@@ -221,73 +328,75 @@ if question:
     )
 
 
-
-    context = ""
-
-    sources=[]
+    if len(docs)==0:
 
 
-
-    for doc in retrieved_docs:
-
-
-        context += (
-
-            "\n\n"
-            + 
-            doc.page_content
-
+        context = (
+            "No relevant information found."
         )
 
 
+    else:
 
-        sources.append({
+        context=""
 
-            "document":
-                doc.metadata.get(
-                    "document_title",
-                    "Unknown"
-                ),
 
-            "file":
+        sources=[]
+
+
+        for doc in docs:
+
+
+            context += (
+
+                "\n\n"
+                +
+                doc.page_content
+
+            )
+
+
+            sources.append({
+
+                "file":
                 doc.metadata.get(
                     "source_file",
                     "Unknown"
                 ),
 
-            "page":
+
+                "page":
                 doc.metadata.get(
                     "page_number",
                     "Unknown"
                 )
 
-        })
+            })
 
 
 
-    # ==============================================
-    # GROQ PROMPT
-    # ==============================================
+    # =================================================
+    # GROQ GENERATION
+    # =================================================
 
 
     prompt=f"""
 
 You are a university academic assistant.
 
-Rules:
+Answer ONLY using the context below.
 
-1. Answer only from provided context.
-2. Do not invent information.
-3. If information is unavailable say:
+If information is unavailable say:
+
 "I could not find this information in the university documents."
 
 
-Context:
+CONTEXT:
 
 {context}
 
 
-Question:
+QUESTION:
 
 {question}
 
@@ -295,7 +404,7 @@ Question:
 
 
 
-    response = groq_client.chat.completions.create(
+    completion = client.chat.completions.create(
 
         model="openai/gpt-oss-120b",
 
@@ -303,18 +412,19 @@ Question:
 
             {
 
-            "role":"system",
+                "role":"system",
 
-            "content":
-            "You provide accurate university academic information."
+                "content":
+                "You provide accurate academic answers."
 
             },
 
+
             {
 
-            "role":"user",
+                "role":"user",
 
-            "content":prompt
+                "content":prompt
 
             }
 
@@ -326,19 +436,24 @@ Question:
 
 
 
-    answer = response.choices[0].message.content
+    answer = (
+        completion
+        .choices[0]
+        .message
+        .content
+    )
 
 
 
-    # ==============================================
-    # SOURCE FORMAT
-    # ==============================================
+    # =================================================
+    # SOURCE CITATIONS
+    # =================================================
 
 
-    source_text="\n\n### 📚 Sources\n"
+    citation="\n\n### 📚 Sources\n"
 
 
-    unique=[]
+    seen=set()
 
 
     for src in sources:
@@ -347,43 +462,49 @@ Question:
         item=(
 
             f"📄 {src['file']} "
-            f"(Page {src['page']})"
+            f"- Page {src['page']}"
 
         )
 
 
-        if item not in unique:
+        if item not in seen:
 
-            unique.append(item)
+            citation += item+"\n"
 
-
-
-    source_text += "\n".join(unique)
+            seen.add(item)
 
 
 
-    final_answer = (
+    final_response = (
 
         answer
 
         +
 
-        source_text
+        citation
 
     )
 
 
 
-    with st.chat_message("assistant"):
+    with st.chat_message(
+        "assistant"
+    ):
 
-        st.markdown(final_answer)
+        st.markdown(
+            final_response
+        )
 
 
 
-    st.session_state.messages.append({
+    st.session_state.messages.append(
+
+        {
 
         "role":"assistant",
 
-        "content":final_answer
+        "content":final_response
 
-    })
+        }
+
+    )
